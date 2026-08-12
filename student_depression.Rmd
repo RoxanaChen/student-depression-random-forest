@@ -1,0 +1,391 @@
+---
+title: "Decoding the Blues: Detecting Student Depression"
+author: "Roxana Chen, Jiayi Xue, Sehee Kim, Jorge Ramos, Nick Liu"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: cerulean
+    highlight: tango
+---
+
+## Introduction & Question
+
+```{r setup, include=FALSE}
+# control global Rmd chunk settings
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+Mental health is a big issue that has been brought further into the public’s eye in recent years, especially concerning (college?) students. The depression rate among college students has risen substantially in recent years. According to *Healthy Minds Study*, a survey from 2021-22 assess students from 133 college campuses, 44% reported symptoms of depression and 15% even considered suicide [^1]. Depression can lead to serious consequences, so being aware of the risk factors and symptoms can help to detect early signs of depression [^1]. Common symptoms of depression include anxiety, loss of interest, changes in eating and sleeping patterns, difficulty with schoolwork, low self-esteem, fatigue, and even suicide [^1]. The National Institutes of Health suggests that biological and psychological factors contributed to depression [^2]. And the outbreak of COVID-19 also negatively impacted mental health and increased the severity of depression among college students [^2]. International students, low-income students, ethnic and gender minorities, and students without enough support from their family also have a higher chance of developing depression in college [^2]. All in all, depression is a crucial issue to tackle, and data analysis can provide valuable insights into effective strategies for combating it.
+
+A dataset found on Kaggle about depression and various factors relating to depression highlights the relationship (connection?) between mental health and academic/lifestyle circumstances. The data looks at 502 individuals, examining for each the variables of *gender, age, academic pressure, study satisfaction, sleep duration, dietary habits, suicidal thoughts, study hours, financial stress, family history of depression, and finally, whether or not the person has depression or not*. By examining the data and building a predictive model, we wish to investigate and answer the question of: **With what accuracy can we predict student's depression based on these given factors?**
+
+[^1]: https://sph.umich.edu/news/2023posts/college-students-anxiety-depression-higher-than-ever-but-so-are-efforts-to-receive-care.html
+[^2]: https://pmc.ncbi.nlm.nih.gov/articles/PMC9331452/
+
+### Load packages
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(fastDummies)
+library(janitor)
+```
+
+
+## The Data
+
+
+### Data Import
+
+```{r}
+data <- read.csv("Depression Student Dataset.csv")
+```
+
+### Data Wrangling
+
+```{r wrangling}
+# change the column names
+colnames(data) = c('sex', 'age', 'academic_pressure', 'study_satisfaction', 'sleep_duration', 'dietary_habits',
+                   'suicidal_thoughts', 'study_hours','financial_stress', 'history_mental_illness', 'depression')
+
+# one-hot encode categorical column
+one_hot_data <- dummy_cols(data, "sex", remove_selected_columns = TRUE)
+
+# clean new one-hot column names
+one_hot_data <- one_hot_data |>
+  clean_names()
+
+# numerically encode yes/no columns
+one_hot_data <- one_hot_data |>
+  mutate(across(c(depression, suicidal_thoughts, history_mental_illness), 
+                ~ case_when(
+                  . == "Yes" ~ 1,
+                  . == "No" ~ 0
+                )))
+
+# numerically encode ordinal variables
+one_hot_data$dietary_habits <- factor(one_hot_data$dietary_habits, levels = c("Healthy", "Moderate", "Unhealthy"), labels = c(1, 2, 3))
+
+one_hot_data$sleep_duration <- factor(one_hot_data$sleep_duration, levels = c("Less than 5 hours", "5-6 hours", "7-8 hours", "More than 8 hours"), labels = c(1, 2, 3, 4))
+```
+
+Although the dataset is already very tidy as is, we decided to do a little further wrangling to better aid our analysis. Firstly, we chose to change the variable name of “gender” to “sex” for more accuracy. We also edited all of the variable names to be more concise and in snake case format. Secondly, we one-hot encoded our categorical variables, and cleaned the new column names. Finally, we numerically encoded the rest of our categorical and ordinal variables. This wrangling enables us to perform cleaner analysis down the line.
+
+Additionally, we also decided to factor order dietary habits and sleep duration since they are categorical and we wanted more numeric responses. So, for dietary habits, we ordered them as **1: Healthy, 2: Moderate, and 3: Unhealthy**. Sleep duration was a bit tricky, since the responses were more of a range, e.g., 5-6 hours, 7-8 hours. So, we decided to take these and factor order them into numeric responses: **1: Less than 5 hours, 2: 5-6 hours, 3: 7-8 hours, 4: More than 8 hours.**
+
+## Analysis
+
+### EDA
+
+**Depression:**
+```{r EDA-depression}
+# Create a summary table for depression counts
+depression_counts <- one_hot_data |>
+  mutate(depression = ifelse(depression == 1, "Yes", "No")) |>
+  group_by(depression) |>
+  summarize(count = n())
+
+# Plot the bar graph with labels
+ggplot(depression_counts, aes(x = depression, y = count, fill = depression)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = count), vjust = 1.5, size = 5, color = "white") + 
+  labs(title = "Almost Equal Amounts of Depressed & Not Depressed Students",
+    subtitle = "Number of Depressed vs Not Depressed Students",
+    x = "Depression",
+    y = "Number of Students"
+  ) +
+  scale_fill_manual(values = c("No" = "pink", "Yes" = "#6280ff")) + 
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14), # Center title
+    plot.subtitle = element_text(hjust = 0.5, size = 12),  # Center the subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.position = "none"  # Remove the legend
+  )
+```
+
+There are a total of 502 students in the dataset. Out of the 502, 250 students do not have depression, while 252 students have depression. We can see that the amount of depressed versus not depressed students is nearly equal, which is beneficial for our analysis because each group is similarly represented. 
+
+
+**Age:**
+```{r EDA-age}
+# Generating plot for depression vs. age
+ggplot(data, aes(x = depression, y = age, fill = depression))+
+  labs(title = 'Older Folks Are Less Depressed Compared to Younger Folks',
+       subtitle = "Relationship Between Depression and Age",
+       x = "Depression",
+       y= "Age")+
+  scale_fill_manual(values = c("No" = "pink", "Yes" = "#6280ff")) + 
+  geom_boxplot()+
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14), # Center title
+    plot.subtitle = element_text(hjust = 0.5, size = 12),  # Center the subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.position = "none"  # Remove the legend
+  )
+```
+
+This boxplot displays the correlation between age and depression. The blue boxplot, students with depression, has a lower median than the pink boxplot, students without depression. For people without depression, the median age is around 28; for people with depression, the median age is around 25. 
+This may suggest that as age increases, the likelihood of having depression decreases. We can infer that this could be due to people becoming more stable mentally as they grow older. Society also expects the typical trajectory of a student to be finding a stable job right out of college, so one would expect that a student following a conventional path to find more financial stability / job security as they grow older, which then provides mental stability. There is generally more uncertainty around your life as a whole when you are a conventionally aged student, causing lower mental stability. We can speculate that this may be a reason why students with depression appear to be younger. Another reason could be taking into account the self-reported nature of this data; some respondents of “older” generations (relative to our data) are more likely to have been raised in an environment where mental health was more stigmatized than it is today, and thus less likely to think or report that they have depression. 
+
+
+
+**Dietary habits: **
+```{r EDA-dietary-habits}
+# Group the data to count occurrences of each combination of dietary habits and depression
+grouped_data <- one_hot_data |>
+  group_by(dietary_habits, depression) |>
+  summarise(Count = n(), .groups = "drop")
+
+# Create the grouped bar plot
+ggplot(grouped_data, aes(x = as.factor(dietary_habits), y = Count, fill = as.factor(depression))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_x_discrete(
+    labels = c("1" = "Healthy", "2" = "Moderately Healthy", "3" = "Unhealthy")
+  ) +
+  scale_fill_manual(values = c("0" = "pink", "1" = "#6280ff"), labels = c("No", "Yes")) +
+  labs(title = "Students With and Without Depression Tend to Have Opposite Eating Habits", 
+    subtitle = "Relationship Between Dietary Habits and Depression",
+    x = "Dietary Habits",
+    y = "Count",
+    fill = "Depression"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14), # Center title
+    plot.subtitle = element_text(hjust = 0.5, size = 12),  # Center the subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.title = element_text(size = 12)
+  )
+```
+
+In the previously shown correlation map, dietary habits and depression were weakly positively correlated. From this grouped bar graph, we can see more specifically that students who have healthy dietary habits are more likely to not be depressed, while those who have unhealthy dietary habits are much more likely to be depressed. Nearly equal amounts of both students with depression and without depression tend to have moderately healthy dietary habits. This interaction between depression and eating habits looks significant, with the distribution of students without depression skewing towards healthy dietary habits, while the distribution of students with depression skewing towards unhealthy eating. While we are not able to discern a direction of causality from this data, due to what we know of depression we can assume that the relationship between depression and dietary habits is in all likelihood bidirectional; we cannot discern a direction of causality because depression can cause poor/unhealthy dietary habits, and unhealthy dietary habits can cause and/or also feed into depression. 
+
+
+
+**Study hours:**
+```{r EDA-study-hours}
+# Create the boxplot
+ggplot(data, aes(x = as.factor(depression), y = study_hours, fill = as.factor(depression))) +
+  geom_boxplot() +
+  labs(title = "Students With Depression Tend to Study Longer Hours",
+    subtitle = "Relationship Between Study Hours and Depression",
+    x = "Depression",
+    y = "Study Hours",
+    fill = "Depression"
+  ) +
+  scale_fill_manual(values = c("No" = "pink", "Yes" = "#6280ff")) + 
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14), # Center title
+    plot.subtitle = element_text(hjust = 0.5, size = 12),  # Center the subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.position = "none"  # Remove the legend
+  )
+```
+
+From the plot above, we can see that although the previous correlation map showed a weak positive correlation between depression and study hours, that those who are not depressed have more variable study hours (as we can see from the middle 50% of the data spanning a wide range) compared to those who are depressed, who are more likely to be putting in high study hours (tighter variability around the middle 50% of the data, showing that the majority of depressed students are in fact studying longer hours with less variability). This pattern suggests that students with depression may be devoting excessive time to their studies, potentially as a coping mechanism or due to a heightened sense of academic pressure. 
+Additionally, the lack of variability in study hours among depressed students may indicate a rigid academic experience, where little time is left for self-care activities like sleep, exercise, or social activities. Over time, this can exacerbate depressive symptoms, making it harder to find balance in their academic and personal lives. This can create a cycle of stress and burnout.
+
+
+**Financial stress: **
+```{r EDA-financial-stress}
+# Create the boxplot using the processed data (one_hot_data)
+ggplot(one_hot_data, aes(x = as.factor(depression), y = financial_stress, fill = as.factor(depression))) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("0" = "pink", "1" = "#6280ff"), labels = c("No", "Yes")) +
+  scale_x_discrete(labels = c("No", "Yes")) +
+  labs(title = "Depressed Students Report More Financial Stress",
+    subtitle = "Relationship Between Depression and Financial Stress",
+    x = "Depression",
+    y = "Financial Stress"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14), # Center title
+    plot.subtitle = element_text(hjust = 0.5, size = 12),  # Center the subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.position = "none"  # Remove the legend
+  )
+```
+
+The above boxplot shows the relationship between financial stress and depression. As we can see, students with depression are more likely to be dealing with higher levels of financial stress than students without depression. The median level of financial stress reported in students without depression was a 2 on a 1-5 scale (1 = low and 5 = high) while the median level of financial stress in students with depression was a 4. While there appears to be a significant difference there in the medians, we can also see further that the middle 50% of the data for students with depression is skewed heavily towards 5, while the middle 50% of the data skews towards 1 for students without depression. Being a student, particularly college, almost always comes with a significant financial burden, with tuition, general living costs, and highly likely student debt increasing stress overall and relating significantly to depression. This aligns with the medium-strong positive correlation we saw earlier between the financial stress and depression in our correlation plot. 
+ 
+
+
+**Study Satisfaction:**
+```{r EDA-study-satisfaction}
+ggplot(data, aes(x = depression, y = study_satisfaction, fill = depression)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("No" = "pink", "Yes" = "#6280ff")) +
+  labs(title = "Students Without Depression Report Higher Study Satisfaction",
+    subtitle = "Relationship Between Depression and Study Satisfaction",
+    x = "Depression",
+    y = "Study Satisfaction"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.position = "none"  # Remove the legend
+  )
+```
+
+
+The graph above shows that students with depression are more likely to have less satisfaction in their studies than students without depression. While the median reported satisfaction – on a scale of 1 (low) to 5 (high) – for students without depression was a 4, the median for students with depression was a 3 (and skewed more towards the higher end of the data). While that may not seem like a big difference, the middle 50% of the data for students without depression was in the 3-5 range, the middle 50% for students with depression ranged from about 1.75 - 4. Overall, students with depression are more likely to be less satisfied in their studies. Contextualizing this information, lower study satisfaction among students with depression may stem from difficulties in concentrating, reduced motivation, or feelings of hopelessness that often accompany depressive symptoms. On the flip side, high academic pressure with little to no satisfactory payoff (like a sense of accomplishment) can contribute to depressive symptoms by fostering feelings of inadequacy, frustration, and chronic stress, which can erode mental resilience and overall well-being over time. These are also not all of the possible explanations for this relationship, nor are these proposed explanations mutually exclusive scenarios, and in fact these factors often feed into each other cyclically. 
+
+
+**Academic Pressure:**
+```{r EDA-academic-pressure}
+ggplot(data, aes(x = depression, y = academic_pressure, fill = depression)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("No" = "pink", "Yes" = "#6280ff")) +
+  labs(
+    title = "Students with Depression Are More Likely to Have High Academic Pressure", subtitle = "Relationship Between Depression and Academic Pressure",
+    x = "Depression",
+    y = "Academic Pressure"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14), # Center title
+    plot.subtitle = element_text(hjust = 0.5, size = 12),  # Center the subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.position = "none"  # Remove the legend
+  )
+```
+
+This boxplot shows the relationship between academic pressure from 1 (low) to 5 (high) and student depression. The blue box represents students with depression and the pink box represents students without depression. Students with depression seem to have a higher median level of academic pressure compared to those without depression. This indicates that depression is associated with increased academic stress. Students with 3 or lower academic pressure do not tend to have depression, while students with 3 or higher academic pressure tend to have depression. It makes sense that higher academic pressure would be heavily implicated in depression, as intense academic demands can lead to chronic stress, feelings of inadequacy, and burnout, which are known risk factors for developing depressive symptoms. 
+
+
+**Suicidal Thoughts:**
+```{r EDA-suicidal-thoughts}
+# Side-by-side bar plot for Depression vs Suicidal Thoughts
+ggplot(one_hot_data, aes(x = factor(suicidal_thoughts), fill = factor(depression))) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Suicidal Thoughts",
+    y = "Count", 
+    title = "Depressed Students Report High Levels of Suicidal Thoughts",
+    subtitle = "Suicidal Thoughts by Depression Status",
+    fill = "Depression"  # Set the legend title
+  ) +
+  scale_x_discrete(labels = c("No", "Yes")) +
+  scale_fill_manual(values = c("pink", "#6280ff"), labels = c("No", "Yes")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14), # Center title
+    plot.subtitle = element_text(hjust = 0.5, size = 12),  # Center the subtitle
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+  )
+```
+
+
+This bar graph shows a very strong correlation between suicidal thoughts and depression in students, reflecting what we saw in our earlier correlation plot. People who have had suicidal thoughts are very likely to have depression, while people who have no suicidal thoughts are very likely to not have depression. 
+
+It is perhaps not very surprising that suicidal thoughts is highly correlated with depression, as logic would dictate that suicidal thoughts come as a result of depression; one would assume that you only get suicidal thoughts (as in desire) if you have depression. However, it is surprising that some people reported suicidal thoughts while simultaneously reporting no depression. The people that answered this way may have some stigma around admitting to depression, or perhaps they could have misinterpreted suicidal thoughts to mean just thinking about suicide in general rather than necessarily desire to commit suicide and mistakenly interpreted and reported from there. So, the error of subjective interpretation is a possible explanation for this data but perhaps it could be something else to look into in the future (ex. why would people have suicidal thoughts without depression?). 
+
+
+### Model and Analysis
+
+```{r}
+##install.packages("ROSE")
+library(randomForest)   # For Random Forest
+library(caret)          # For confusion matrix and evaluation
+library(pROC)           # For ROC curve and AUC
+
+# Ensure categorical variables are factors
+data$depression <- as.factor(data$depression)
+data$sex <- as.factor(data$sex)
+data$sleep_duration <- as.factor(data$sleep_duration)
+data$dietary_habits <- as.factor(data$dietary_habits)
+data$suicidal_thoughts <- as.factor(data$suicidal_thoughts)
+data$history_mental_illness <- as.factor(data$history_mental_illness)
+
+# Split data into training and testing sets
+set.seed(1234)  # For reproducibility
+split <- initial_split(data, prop = 0.7)
+train_data <- training(split)
+test_data <- testing(split)
+
+# Balance the training dataset using ROSE
+library(ROSE)
+train_data_balanced <- ROSE(depression ~ ., data = train_data, seed = 123)$data
+
+# Train the Random Forest model
+set.seed(1234)  # For reproducibility
+rf_model <- randomForest(depression ~ ., 
+                         data = train_data_balanced, 
+                         ntree = 500,        # Number of trees
+                         mtry = 3,           # Number of predictors considered at each split
+                         importance = TRUE)  # Calculate variable importance
+
+# Print model summary
+print(rf_model)
+
+# Evaluate Variable Importance
+varImpPlot(rf_model)
+
+# Predict on the test dataset
+rf_predictions <- predict(rf_model, newdata = test_data, type = "response")
+
+# Generate a Confusion Matrix
+conf_matrix <- confusionMatrix(rf_predictions, test_data$depression)
+print(conf_matrix)
+
+# Calculate Accuracy
+accuracy <- sum(diag(conf_matrix$table)) / sum(conf_matrix$table)
+cat("Model Accuracy:", accuracy, "\n")
+
+# Generate ROC Curve and Calculate AUC
+rf_probabilities <- predict(rf_model, newdata = test_data, type = "prob")[,2]  # Probabilities for "Yes"
+roc_curve <- roc(test_data$depression, rf_probabilities, levels = rev(levels(test_data$depression)))
+plot(roc_curve, main = "ROC Curve")
+cat("AUC:", auc(roc_curve), "\n")
+
+
+```
+  We trained a Random Forest classification model to predict whether a person has depression based on factors such as age, academic pressure, study satisfaction, sleep duration, dietary habits, suicidal thoughts, study hours, history of mental illness, and sex. The model first converts the categorical variables “depression,” “sex,” and “sleep_duration” into factors. To ensure the model performs better on unseen data, we chose to split the data set into training and testing sets. This prevents overfitting and makes the model more generalized to unseen data. The dataset is split into 70% training data and 30% testing data.  The training dataset is balanced using the ROSE (Random Over-Sampling Examples) package because the “depression” variable is imbalanced. An imbalanced dataset occurs when the target variable is uneven. Using the ROSE package helps generate synthetic samples and reduces bias toward the majority class, improving the overall accuracy of the model's predictions.
+
+  The Random Forest model builds decision trees during the training process and combines their outputs to make predictions. We chose this over the other option of logistic regression due to problems with multicollinearity. This was an issue of where our features were too correlated to produce any conclusive results. For our features, there are a total of 500 trees, and three predictors are used for splitting at each node. The number of 500 trees were chosen as we believed it was a fair balance of being computational and sufficient enough to converge. For the 3 predictors at each split, there is a rule of thumb for classification which is: $\sqrt{p}$, where p is the number of predictors. To have enough data to build the trees, the algorithm randomly selects subsets of data with replacement to build each tree. During testing, predictions are made by averaging the outputs from all the trees. Afterward, we rank and display the importance of each factor using rf_model. Importance was given by a built in function from the rf_model. Factors with higher importance scores play a more significant role in predicting a student' depression. The function predict(rf_model, newdata = test_data) is used to predict and classify depression status for the testing data. With this, we can determine the metrics of the model (i.e. accuracy, sensitivity, specificity and area under curve).
+
+  The confusion matrix summarizes the classification performance by comparing the predicted labels with the actual labels in the testing data. The accuracy of the model is then calculated, and metrics like True Positives (TP), False Positives (FP), True Negatives (TN), and False Negatives (FN) are also computed. The ROC curve shows the correlation and trade-off between sensitivity and specificity. Both sensitivity and specificity are very high, which implies that the model performs well.
+
+
+## Results & Discussion 
+Given the specific factors from the survey, we could predict a student’s self-reported depression with an accuracy of 88.74%. The random forest model has determined the most important five predictors to be: academic pressure, suicidal thoughts, financial stress, age and study satisfaction. We can evaluate our model using the following metrics:
+
+* `Accuracy`:  88.74%, the probability that the model predicts correctly whether a student self diagnosed themselves as depressed.
+* `Sensitivity`: 85.53% of students that were not depressed were correctly identified as “No”.
+* `Specificity`: 92.00% of students that were depressed were correctly identified as “Yes”.
+* `Area under curve (AUC)`: 0.9696, the probability that the model, if given a randomly chosen positive and negative example, will rank the positive higher than the negative. A value closer to 1 signifies strong discrimination between depressed and non-depressed students.
+
+The identification of academic pressure as the most significant predictor highlights the pivotal role of academics influencing mental health in students. In this case, we prioritize specificity because identifying students who are depressed is critical for early intervention and support. We can ensure that individuals who might need help are less likely to be missed by the model. With this, institutions can allocate mental health resources more effectively and at critical moments. Further more, institutions can target areas where the model revealed as more influential than others. This could involve offering support through initiatives such as financial aid programs, workshops on managing stress and academic counseling. On an individual level, students could also focus on improving study satisfaction by adopting effective and healthy study habits. By addressing key factors revealed by the model, both institutions and students can work towards fostering mental well-being.
+
+
+
+### Conclusion
+Our Random Forest model is able to classify self-reported depression with an accuracy of 88.74%. This indicates that nearly nine out of ten predictions made by our model on the testing data set correctly identified whether a student self-reported as depressed or not. The random forest model identified five key predictors that were the most significant in predicting depression status of a student: academic pressure, suicidal thoughts, financial stress, age and study satisfaction. Additionally, the model portrayed high values in identifying false negative and true positives; 92% and 85.53% respectively. These two ratios are backed by our results with an Area Under the Curve value of 96%. This demonstrates that the model is able to classify a reported non-depressed and depressed students taking into account the five variables discussed. Overall, the purpose of our research is to bring awareness on mental health revolving college students. We hope to bring a valuable tool in detecting risk factors of depression taking into account prominent living habits and behaviors. 
+
+### Limitations
+  Our data consists of a small sample size of the population with approximately 500 observations. As a result, it becomes difficult to have a true and an accurate relationship between our target and feature variables. Additionally, this leads to biases as our data consists of a 50% depression rate compared to approximately 44% overall in our population as mentioned in our background. 
+  
+  Looking into our data, since it is derived from a questionnaire our values are categorical (some with multiple levels such as our sleep duration column) and discrete. The categorical values may lead to multidimensionality risking multicollinearity and implementing unnecessary noise. This may lead to inappropriate implementations of certain models such as logistic regression and other linear binary classification models. As a result, we found and resorted to a Random Forests model to better fit the features of our data in order to get a more accurate target prediction. 
+  
+  Lastly, our observational values may consist of subjective responses. For instance, some of the responders may not be properly diagnosed with depression or may not even tell the truth due to the stigma revolving around depression. This may lead to true negatives or even false positives (a person may not be depressed, but responded with ‘Yes’), leading to certain errors and statistical challenges as results may be insignificant. 
+  
+  Overall, we tried our best to find a relationship and classification of certain lifestyles while in college with depression. Our main purpose was to bring awareness on depression and its prevalence in college students. 
+
+ 
